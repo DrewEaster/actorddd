@@ -4,6 +4,7 @@ import akka.actor._
 import akka.contrib.pattern.ClusterSharding
 import akka.io.IO
 import akka.persistence.journal.leveldb.{SharedLeveldbJournal, SharedLeveldbStore}
+import com.example.ReleaseProtocol.SetView
 import com.typesafe.config.ConfigFactory
 import spray.can.Http
 import akka.pattern.ask
@@ -19,15 +20,10 @@ object Boot extends App {
 
   startupSharedJournal(system, path = ActorPath.fromString("akka.tcp://ClusterSystem@127.0.0.1:2551/user/store"))
 
-  val releasesView = system.actorOf(Releases.props())
+  val domainModel = new DomainModel(system).register(Release)
+  val releasesView = system.actorOf(Releases.props(), "releases-view")
 
-  val releaseRegion = ClusterSharding(system).start(
-    typeName = Release.shardName,
-    entryProps = Some(Release.props(releasesView)),
-    idExtractor = Release.idExtractor,
-    shardResolver = Release.shardResolver)
-
-  val service = system.actorOf(ApiServiceActor.props(releaseRegion, releasesView), "demo-service")
+  val service = system.actorOf(ApiServiceActor.props(domainModel, releasesView), "demo-service")
 
   implicit val timeout = new Timeout(5.seconds)
   // start a new HTTP server on port 8080 with our service actor as the handler

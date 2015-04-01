@@ -1,51 +1,49 @@
 package com.example
 
+import java.util.UUID
+
+import scala.concurrent.{Future, Await}
 import scala.concurrent.duration._
 import akka.actor._
-import akka.contrib.pattern.ShardRegion
 import akka.contrib.pattern.ShardRegion.Passivate
 import akka.persistence.PersistentActor
 
-object Release {
+object Release extends AggregateRootType {
 
   import ReleaseProtocol._
 
-  def props(releasesView: ActorRef): Props = Props(new Release(releasesView))
+  val typeInfo: Class[_ <: PersistentActor] = classOf[Release]
+  val props: Props = Props[Release]
+  val name: String = "Release"
 
-  val idExtractor: ShardRegion.IdExtractor = {
-    case cmd: Command => (cmd.releaseId, cmd)
-  }
-
-  val shardResolver: ShardRegion.ShardResolver = msg => msg match {
-    case cmd: Command => (math.abs(cmd.releaseId.hashCode) % 100).toString
-  }
-
-  val shardName: String = "Release"
-
-
-  private case class State(info: ReleaseInfo, currentDeployment: Option[Deployment] = None) {
-
+  private case class State(id: UUID, info: ReleaseInfo, currentDeployment: Option[Deployment] = None) {
     def updated(evt: Event): State = evt match {
-      case ReleaseCreated(releaseId, i) => copy(info = i)
+      case ReleaseCreated(releaseId, i) => copy(id = UUID.fromString(releaseId), info = i)
       case DeploymentStarted(releaseId, i) => copy(currentDeployment = Some(i))
       case DeploymentEnded(releaseId, i) => copy(currentDeployment = None)
     }
   }
+
 }
 
-class Release(releasesView: ActorRef) extends PersistentActor with ActorLogging {
+class Release extends PersistentActor with ActorLogging {
 
   import Release._
   import ReleaseProtocol._
+  import scala.concurrent.ExecutionContext.Implicits.global
 
-  // self.path.parent.name is the type name (utf-8 URL-encoded)
-  // self.path.name is the entry identifier (utf-8 URL-encoded)
+  var releasesView: Option[ActorRef] = Some(Await.ready(context.actorSelection(self.path.root / "user" / "releases-view").resolveOne()(5 seconds), 5 seconds).value.get.get)
+
   override def persistenceId: String = self.path.parent.name + "-" + self.path.name
 
-  // passivate the entity when no activity
   context.setReceiveTimeout(2.minutes)
 
-  private var state = State(ReleaseInfo("", "", None, None))
+  // FIXME: This is very unsafe
+
+
+  println(self.path.root / "user" / "releases-view")
+
+  private var state = State(null, ReleaseInfo("", "", None, None))
 
   override def receiveRecover: Receive = {
     case evt: ReleaseCreated =>
@@ -64,33 +62,33 @@ class Release(releasesView: ActorRef) extends PersistentActor with ActorLogging 
   override def receiveCommand: Receive = initial
 
   def initial: Receive = {
-    case CreateRelease(id, info) =>
-      persist(ReleaseCreated(id, info)) { evt =>
+    case Command(id, CreateRelease(info)) =>
+      persist(ReleaseCreated(id.toString, info)) { evt =>
         state = state.updated(evt)
         context.become(notDeploying)
-        releasesView ! evt
+        releasesView.map(_ ! evt)
         log.info("Release created: " + evt)
       }
   }
 
   def notDeploying: Receive = {
-    case StartDeployment(id) =>
-      persist(DeploymentStarted(id, Deployment(started = System.currentTimeMillis()))) { evt =>
+    case Command(id, StartDeployment) =>
+      persist(DeploymentStarted(id.toString, Deployment(started = System.currentTimeMillis()))) { evt =>
         state = state.updated(evt)
         context.become(deploying)
-        releasesView ! evt
+        releasesView.map(_ ! evt)
         log.info("Deployment started: " + evt)
       }
   }
 
   def deploying: Receive = {
-    case EndDeployment(id) =>
+    case Command(id, EndDeployment) =>
       state.currentDeployment.map { deployment =>
         val ended = System.currentTimeMillis()
-        persist(DeploymentEnded(id, deployment.copy(ended = Some(ended), length = Some(ended - deployment.started), status = "COMPLETED"))) { evt =>
+        persist(DeploymentEnded(id.toString, deployment.copy(ended = Some(ended), length = Some(ended - deployment.started), status = "COMPLETED"))) { evt =>
           state = state.updated(evt)
           context.become(notDeploying)
-          releasesView ! evt
+          releasesView.map(_ ! evt)
           log.info("Deployment ended: " + evt)
         }
       }.orElse {
@@ -100,6 +98,7 @@ class Release(releasesView: ActorRef) extends PersistentActor with ActorLogging 
   }
 
   override def unhandled(msg: Any): Unit = msg match {
+    case SetView(view) => releasesView = Some(view)
     case ReceiveTimeout => context.parent ! Passivate(stopMessage = PoisonPill)
     case _ => super.unhandled(msg)
   }

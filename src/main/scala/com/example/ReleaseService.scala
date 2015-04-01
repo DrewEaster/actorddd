@@ -31,7 +31,7 @@ trait ReleaseService extends HttpService {
 
   implicit val timeout = new Timeout(5 seconds)
 
-  val releaseRegion: ActorRef
+  val domainModel: DomainModel
 
   val releasesView: ActorRef
 
@@ -51,9 +51,10 @@ trait ReleaseService extends HttpService {
             entity(as[ReleaseInfo]) { info =>
               respondWithStatus(Created) {
                 complete {
-                  val id = UUID.randomUUID().toString
-                  releaseRegion ! CreateRelease(id, info)
-                  JsObject("id" -> JsString(id))
+                  val id = UUID.randomUUID()
+                  val release = domainModel.aggregateRootOf(Release, id)
+                  release ! CreateRelease(info)
+                  JsObject("id" -> JsString(id.toString))
                 }
               }
             }
@@ -73,7 +74,8 @@ trait ReleaseService extends HttpService {
               post {
                 respondWithStatus(Created) {
                   complete {
-                    releaseRegion ! StartDeployment(releaseId)
+                    val release = domainModel.aggregateRootOf(Release, UUID.fromString(releaseId))
+                    release ! StartDeployment
                     ""
                   }
                 }
@@ -81,7 +83,8 @@ trait ReleaseService extends HttpService {
                 delete {
                   respondWithStatus(OK) {
                     complete {
-                      releaseRegion ! EndDeployment(releaseId)
+                      val release = domainModel.aggregateRootOf(Release, UUID.fromString(releaseId))
+                      release ! EndDeployment
                       ""
                     }
                   }

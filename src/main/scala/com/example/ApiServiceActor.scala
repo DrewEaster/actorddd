@@ -3,10 +3,10 @@ package com.example
 import akka.actor.{Props, ActorRef, Actor}
 
 object ApiServiceActor {
-  def props(releaseRegion: ActorRef, releasesView: ActorRef) = Props(new ApiServiceActor(releaseRegion, releasesView))
+  def props(domainModel: DomainModel, releasesView: ActorRef) = Props(new ApiServiceActor(domainModel, releasesView))
 }
 
-class ApiServiceActor(val releaseRegion: ActorRef, val releasesView: ActorRef) extends Actor with Api {
+class ApiServiceActor(val domainModel: DomainModel, val releasesView: ActorRef) extends Actor with Api {
 
   println(self.path)
 

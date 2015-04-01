@@ -1,20 +1,20 @@
 package com.example
 
+import akka.actor.ActorRef
+
 object ReleaseProtocol {
+
+  case class SetView(view: ActorRef)
 
   case class ReleaseInfo(componentName: String, version: String, gitCommit: Option[String], gitTag: Option[String])
 
   case class Deployment(started: Long, ended: Option[Long] = None, length: Option[Long] = None, status: String = "IN_PROGRESS")
 
-  sealed trait Command {
-    def releaseId: String
-  }
+  case class CreateRelease(info: ReleaseInfo)
 
-  case class CreateRelease(releaseId: String, info: ReleaseInfo) extends Command
+  case object StartDeployment
 
-  case class StartDeployment(releaseId: String) extends Command
-
-  case class EndDeployment(releaseId: String) extends Command
+  case object EndDeployment
 
   sealed trait Event
 

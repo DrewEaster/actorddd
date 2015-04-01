@@ -15,6 +15,8 @@ class Releases extends Actor with ActorLogging {
 
   var releases = Map[String, ReleaseDto]()
 
+  println(self.path)
+
   override def receive = {
     case ReleaseCreated(id, info) => releases = releases + (id -> ReleaseDto(id, info, None, List()))
     case DeploymentStarted(id, info) => releases.get(id).map { release =>
