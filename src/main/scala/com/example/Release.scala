@@ -2,48 +2,40 @@ package com.example
 
 import java.util.UUID
 
-import scala.concurrent.{Future, Await}
+import com.example.ReleaseProtocol._
+
 import scala.concurrent.duration._
 import akka.actor._
 import akka.contrib.pattern.ShardRegion.Passivate
-import akka.persistence.PersistentActor
 
 object Release extends AggregateRootType {
-
-  import ReleaseProtocol._
-
-  val typeInfo: Class[_ <: PersistentActor] = classOf[Release]
-  val props: Props = Props[Release]
-  val name: String = "Release"
-
-  private case class State(id: UUID, info: ReleaseInfo, currentDeployment: Option[Deployment] = None) {
-    def updated(evt: Event): State = evt match {
-      case ReleaseCreated(releaseId, i) => copy(id = UUID.fromString(releaseId), info = i)
-      case DeploymentStarted(releaseId, i) => copy(currentDeployment = Some(i))
-      case DeploymentEnded(releaseId, i) => copy(currentDeployment = None)
-    }
-  }
-
+  override def template(system: ActorSystem) = new ReleaseTemplate(system)
 }
 
-class Release extends PersistentActor with ActorLogging {
+class ReleaseTemplate(val system: ActorSystem) extends AggregateRootTemplate {
 
-  import Release._
+  val typeInfo = Release
+
+  override def props(queryModel: ActorRef) = Props(new Release(queryModel))
+
+  override val queryModelProps = Props[Releases]
+}
+
+case class ReleaseState(id: UUID, info: ReleaseInfo, currentDeployment: Option[Deployment] = None) {
+  def updated(evt: Event): ReleaseState = evt match {
+    case ReleaseCreated(releaseId, i) => copy(id = UUID.fromString(releaseId), info = i)
+    case DeploymentStarted(releaseId, i) => copy(currentDeployment = Some(i))
+    case DeploymentEnded(releaseId, i) => copy(currentDeployment = None)
+  }
+}
+
+class Release(val queryModel: ActorRef) extends AggregateRoot with ActorLogging {
+
   import ReleaseProtocol._
-  import scala.concurrent.ExecutionContext.Implicits.global
-
-  var releasesView: Option[ActorRef] = Some(Await.ready(context.actorSelection(self.path.root / "user" / "releases-view").resolveOne()(5 seconds), 5 seconds).value.get.get)
-
-  override def persistenceId: String = self.path.parent.name + "-" + self.path.name
 
   context.setReceiveTimeout(2.minutes)
 
-  // FIXME: This is very unsafe
-
-
-  println(self.path.root / "user" / "releases-view")
-
-  private var state = State(null, ReleaseInfo("", "", None, None))
+  private var state = ReleaseState(null, ReleaseInfo("", "", None, None))
 
   override def receiveRecover: Receive = {
     case evt: ReleaseCreated =>
@@ -66,7 +58,6 @@ class Release extends PersistentActor with ActorLogging {
       persist(ReleaseCreated(id.toString, info)) { evt =>
         state = state.updated(evt)
         context.become(notDeploying)
-        releasesView.map(_ ! evt)
         log.info("Release created: " + evt)
       }
   }
@@ -76,7 +67,6 @@ class Release extends PersistentActor with ActorLogging {
       persist(DeploymentStarted(id.toString, Deployment(started = System.currentTimeMillis()))) { evt =>
         state = state.updated(evt)
         context.become(deploying)
-        releasesView.map(_ ! evt)
         log.info("Deployment started: " + evt)
       }
   }
@@ -88,7 +78,6 @@ class Release extends PersistentActor with ActorLogging {
         persist(DeploymentEnded(id.toString, deployment.copy(ended = Some(ended), length = Some(ended - deployment.started), status = "COMPLETED"))) { evt =>
           state = state.updated(evt)
           context.become(notDeploying)
-          releasesView.map(_ ! evt)
           log.info("Deployment ended: " + evt)
         }
       }.orElse {
@@ -98,7 +87,6 @@ class Release extends PersistentActor with ActorLogging {
   }
 
   override def unhandled(msg: Any): Unit = msg match {
-    case SetView(view) => releasesView = Some(view)
     case ReceiveTimeout => context.parent ! Passivate(stopMessage = PoisonPill)
     case _ => super.unhandled(msg)
   }

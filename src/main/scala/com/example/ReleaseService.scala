@@ -33,8 +33,6 @@ trait ReleaseService extends HttpService {
 
   val domainModel: DomainModel
 
-  val releasesView: ActorRef
-
   import ReleaseJsonSupport._
   import spray.httpx.SprayJsonSupport._
 
@@ -93,7 +91,7 @@ trait ReleaseService extends HttpService {
         }
     }
 
-  private def getReleases = OnCompleteFutureMagnet((releasesView ? GetReleases).mapTo[ReleasesDto])
+  private def getReleases = OnCompleteFutureMagnet((domainModel.viewOf(Release) ? GetReleases).mapTo[ReleasesDto])
 
-  private def getRelease(id: String) = OnCompleteFutureMagnet((releasesView ? GetRelease(id)).mapTo[Option[ReleaseDto]])
+  private def getRelease(id: String) = OnCompleteFutureMagnet((domainModel.viewOf(Release) ? GetRelease(id)).mapTo[Option[ReleaseDto]])
 }

@@ -2,14 +2,43 @@ package com.example
 
 import java.util.UUID
 
-import akka.actor.{ActorRef, Props, ActorSystem}
+import akka.actor._
 import akka.contrib.pattern.{ClusterSharding, ShardRegion}
-import akka.persistence.PersistentActor
 
 trait AggregateRootType {
-  val typeInfo: Class[_ <: PersistentActor]
-  val name: String
-  val props: Props
+  def template(system: ActorSystem): AggregateRootTemplate
+}
+
+object AggregateRootTemplate {
+  val idExtractor: ShardRegion.IdExtractor = {
+    case cmd: Command => (cmd.id.toString, cmd)
+  }
+
+  val shardResolver: ShardRegion.ShardResolver = msg => msg match {
+    case cmd: Command => (math.abs(cmd.id.toString.hashCode) % 100).toString
+  }
+}
+
+trait AggregateRootTemplate {
+
+  import AggregateRootTemplate._
+
+  val system: ActorSystem
+
+  def props(queryModel: ActorRef): Props
+
+  val queryModelProps: Props
+  val typeInfo: AggregateRootType
+
+  lazy val view = system.actorOf(queryModelProps)
+
+  lazy val region = ClusterSharding(system).start(
+    typeName = typeInfo.getClass.getName,
+    entryProps = Some(props(view)),
+    idExtractor = idExtractor,
+    shardResolver = shardResolver)
+
+  def aggregateRootOf(id: UUID) = AggregateRootRef(id, region)
 }
 
 case class Command(id: UUID, payload: Any)
@@ -26,29 +55,25 @@ case class AggregateRootRef(id: UUID, region: ActorRef) {
 
 class DomainModel(system: ActorSystem) {
 
-  val idExtractor: ShardRegion.IdExtractor = {
-    case cmd: Command => (cmd.id.toString, cmd)
-  }
+  var aggregateRootTemplates = Map[AggregateRootType, AggregateRootTemplate]()
 
-  val shardResolver: ShardRegion.ShardResolver = msg => msg match {
-    case cmd: Command => (math.abs(cmd.id.toString.hashCode) % 100).toString
-  }
-
-  var aggregateRoots = Map[Class[_ <: PersistentActor], ActorRef]()
-
-  def register(aggregateRootType: AggregateRootType) = {
-    val ar = ClusterSharding(system).start(
-      typeName = aggregateRootType.name,
-      entryProps = Some(aggregateRootType.props),
-      idExtractor = idExtractor,
-      shardResolver = shardResolver)
-    aggregateRoots = aggregateRoots + (aggregateRootType.typeInfo -> ar)
+  def register(typeInfo: AggregateRootType) = {
+    val template = typeInfo.template(system)
+    aggregateRootTemplates = aggregateRootTemplates + (typeInfo -> template)
     this
   }
 
-  def aggregateRootOf(aggregateRootType: AggregateRootType, id: UUID) = {
-    if (aggregateRoots.contains(aggregateRootType.typeInfo)) {
-      AggregateRootRef(id, aggregateRoots(aggregateRootType.typeInfo))
+  def aggregateRootOf(typeInfo: AggregateRootType, id: UUID) = {
+    if (aggregateRootTemplates.contains(typeInfo)) {
+      aggregateRootTemplates(typeInfo).aggregateRootOf(id)
+    } else {
+      throw new IllegalArgumentException("The aggregate root type is not supported by this domain model!")
+    }
+  }
+
+  def viewOf(typeInfo: AggregateRootType) = {
+    if (aggregateRootTemplates.contains(typeInfo)) {
+      aggregateRootTemplates(typeInfo).view
     } else {
       throw new IllegalArgumentException("The aggregate root type is not supported by this domain model!")
     }

@@ -1,14 +1,12 @@
 package com.example
 
-import akka.actor.{Props, ActorRef, Actor}
+import akka.actor.{Props, Actor}
 
 object ApiServiceActor {
-  def props(domainModel: DomainModel, releasesView: ActorRef) = Props(new ApiServiceActor(domainModel, releasesView))
+  def props(domainModel: DomainModel) = Props(new ApiServiceActor(domainModel))
 }
 
-class ApiServiceActor(val domainModel: DomainModel, val releasesView: ActorRef) extends Actor with Api {
-
-  println(self.path)
+class ApiServiceActor(val domainModel: DomainModel) extends Actor with Api {
 
   def actorRefFactory = context
 
