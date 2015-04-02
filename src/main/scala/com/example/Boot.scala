@@ -19,6 +19,7 @@ object Boot extends App {
   new SharedJournal(system, path = ActorPath.fromString("akka.tcp://ClusterSystem@127.0.0.1:2551/user/store"))
 
   // Initialise the domain model
+  // At the moment, only registering a single aggregate root type 'Release'
   val domainModel = new DomainModel(system).register(Release)
 
   val service = system.actorOf(ApiServiceActor.props(domainModel), "demo-service")
