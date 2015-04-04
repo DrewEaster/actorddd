@@ -91,7 +91,7 @@ trait ReleaseService extends HttpService {
         }
     }
 
-  private def getReleases = OnCompleteFutureMagnet((domainModel.viewOf(Release) ? GetReleases).mapTo[ReleasesDto])
+  private def getReleases = OnCompleteFutureMagnet((domainModel.queryModelOf(Releases) ? GetReleases).mapTo[ReleasesDto])
 
-  private def getRelease(id: String) = OnCompleteFutureMagnet((domainModel.viewOf(Release) ? GetRelease(id)).mapTo[Option[ReleaseDto]])
+  private def getRelease(id: String) = OnCompleteFutureMagnet((domainModel.queryModelOf(Releases)? GetRelease(id)).mapTo[Option[ReleaseDto]])
 }

@@ -16,8 +16,6 @@ object ReleaseProtocol {
 
   case object EndDeployment
 
-  sealed trait Event
-
   case class ReleaseCreated(releaseId: String, info: ReleaseInfo) extends Event
 
   case class DeploymentStarted(releaseId: String, info: Deployment) extends Event

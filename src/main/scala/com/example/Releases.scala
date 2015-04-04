@@ -2,9 +2,11 @@ package com.example
 
 import akka.actor._
 
-object Releases {
+object Releases extends QueryModel {
 
-  def props(): Props = Props(new Releases)
+  val aggregateRootType = Release
+
+  val props = Props(new Releases)
 }
 
 class Releases extends Actor with ActorLogging {
@@ -12,10 +14,7 @@ class Releases extends Actor with ActorLogging {
   import ReleasesProtocol._
   import ReleaseProtocol._
 
-
   var releases = Map[String, ReleaseDto]()
-
-  println(self.path)
 
   override def receive = {
     case ReleaseCreated(id, info) => releases = releases + (id -> ReleaseDto(id, info, None, List()))
