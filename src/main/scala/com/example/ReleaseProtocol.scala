@@ -16,9 +16,14 @@ object ReleaseProtocol {
 
   case object EndDeployment
 
-  case class ReleaseCreated(releaseId: String, info: ReleaseInfo) extends Event
+  trait ReleaseEvent extends Event {
+    override val aggregateType: AggregateRootType = Release
+  }
 
-  case class DeploymentStarted(releaseId: String, info: Deployment) extends Event
+  case class ReleaseCreated(releaseId: String, info: ReleaseInfo) extends ReleaseEvent
 
-  case class DeploymentEnded(releaseId: String, info: Deployment) extends Event
+  case class DeploymentStarted(releaseId: String, info: Deployment) extends ReleaseEvent
+
+  case class DeploymentEnded(releaseId: String, info: Deployment) extends ReleaseEvent
+
 }

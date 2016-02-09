@@ -11,7 +11,7 @@ javacOptions ++= Seq("-source", "1.8", "-target", "1.8")
 resolvers += "Typesafe Releases" at "http://repo.typesafe.com/typesafe/releases/"
 
 libraryDependencies ++= {
-  val akkaV = "2.3.6"
+  val akkaV = "2.4.1"
   val sprayV = "1.3.2"
   Seq(
     "io.spray"            %%  "spray-can"       % sprayV,
@@ -21,7 +21,9 @@ libraryDependencies ++= {
     "io.spray"            %%  "spray-testkit"   % sprayV    % "test",
     "org.specs2"          %%  "specs2-core"     % "2.3.11"  % "test",
     "com.typesafe.akka" %% "akka-contrib" % akkaV,
+    "com.typesafe.akka" %% "akka-cluster-sharding" % akkaV,
     "com.typesafe.akka" %% "akka-multi-node-testkit" % akkaV,
+    "com.typesafe.akka" %% "akka-persistence-query-experimental" % akkaV,
     "org.scalatest" %% "scalatest" % "2.1.6" % "test"
   )
 }

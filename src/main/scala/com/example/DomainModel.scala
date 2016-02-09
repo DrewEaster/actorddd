@@ -3,22 +3,30 @@ package com.example
 import java.util.UUID
 
 import akka.actor._
-import akka.contrib.pattern.ShardRegion.Passivate
-import akka.contrib.pattern.{ClusterSharding, ShardRegion}
-import akka.persistence.{AtLeastOnceDelivery, PersistentActor, PersistentView}
+import akka.cluster.sharding.ShardRegion.Passivate
+import akka.cluster.sharding.{ClusterSharding, ClusterShardingSettings, ShardRegion}
+import akka.persistence.PersistentActor
+import akka.persistence.query.PersistenceQuery
+import akka.persistence.query.journal.leveldb.scaladsl.LeveldbReadJournal
+import akka.stream.ActorMaterializer
+import akka.stream.scaladsl.Sink
 
-trait Event
+trait Event {
+  val aggregateType: AggregateRootType
+}
 
 trait AggregateRootType {
+  def name = getClass.getName
+
   def template(system: ActorSystem): AggregateRootTemplate
 }
 
 object AggregateRootTemplate {
-  val idExtractor: ShardRegion.IdExtractor = {
+  val extractEntityId: ShardRegion.ExtractEntityId = {
     case cmd: Command => (cmd.id.toString, cmd)
   }
 
-  val shardResolver: ShardRegion.ShardResolver = {
+  val extractShardId: ShardRegion.ExtractShardId = {
     case cmd: Command => (math.abs(cmd.id.toString.hashCode) % 100).toString
   }
 }
@@ -35,28 +43,21 @@ trait AggregateRootTemplate {
 
   val system: ActorSystem
 
-  def props(aggregator: ActorPath): Props
+  def props(): Props
 
   val typeInfo: AggregateRootType
 
-  lazy val eventAggregator = system.actorOf(EventAggregator.props(typeInfo))
-
-  lazy val region = ClusterSharding(system).start(
+  lazy val aggregateRegion = ClusterSharding(system).start(
     typeName = typeInfo.getClass.getName,
-    entryProps = Some(props(eventAggregator.path)),
-    idExtractor = idExtractor,
-    shardResolver = shardResolver)
+    entityProps = props(),
+    settings = ClusterShardingSettings(system),
+    extractEntityId = extractEntityId,
+    extractShardId = extractShardId)
 
-  def aggregateRootOf(id: UUID) = AggregateRootRef(id, region)
+  def aggregateRootOf(id: UUID) = AggregateRootRef(id, aggregateRegion)
 }
 
-case class ConfirmableEvent(deliveryId: Long, msg: Any)
-
-case class Confirm(deliveryId: Long)
-
-case class ConfirmedEvent(deliveryId: Long) extends Event
-
-abstract class AggregateRoot[S](initialState: AggregateState[S], aggregator: ActorPath) extends PersistentActor with AtLeastOnceDelivery with ActorLogging {
+abstract class AggregateRoot[S](initialState: AggregateState[S]) extends PersistentActor with ActorLogging {
 
   import scala.concurrent.duration._
 
@@ -68,19 +69,15 @@ abstract class AggregateRoot[S](initialState: AggregateState[S], aggregator: Act
 
   def updateState(event: Event) {
     event match {
-      case ConfirmedEvent(deliveryId) => confirmDelivery(deliveryId)
       case _ =>
         log.info("Updating state...")
         internalState = internalState.updated(event)
-        log.info("Delivering event to aggregator: " + aggregator.toStringWithoutAddress)
-        deliver(aggregator, id => ConfirmableEvent(id, event))
     }
   }
 
   def state = internalState.value
 
   override def unhandled(msg: Any): Unit = msg match {
-    case Confirm(deliveryId) => persist(ConfirmedEvent(deliveryId))(updateState)
     case ReceiveTimeout => context.parent ! Passivate(stopMessage = PoisonPill)
     case _ => super.unhandled(msg)
   }
@@ -98,26 +95,6 @@ case class AggregateRootRef(id: UUID, region: ActorRef) {
   }
 }
 
-object EventAggregator {
-  def props(aggregateRootType: AggregateRootType) = Props(new EventAggregator(aggregateRootType))
-}
-
-class EventAggregator(val aggregateRootType: AggregateRootType) extends PersistentActor with ActorLogging {
-
-  override def persistenceId = "event-aggregator-" + aggregateRootType.getClass.getSimpleName.toLowerCase
-
-  override def receiveRecover = {
-    case _ => // do nothing as we don't need in memory state for the aggregator
-  }
-
-  override def receiveCommand = {
-    case ConfirmableEvent(deliveryId, event) =>
-      persist(event) { evt =>
-        sender() ! Confirm(deliveryId)
-      }
-  }
-}
-
 trait QueryModel {
 
   val aggregateRootType: AggregateRootType
@@ -125,28 +102,19 @@ trait QueryModel {
   val props: Props
 }
 
-object EventAggregatorView {
-  def props(viewName: String, aggregateRootType: AggregateRootType, queryModel: ActorRef) = Props(new EventAggregatorView(viewName, aggregateRootType, queryModel))
-}
-
-class EventAggregatorView(val viewName: String, val aggregateRootType: AggregateRootType, queryModel: ActorRef) extends PersistentView {
-
-  override def persistenceId = "event-aggregator-" + aggregateRootType.getClass.getSimpleName.toLowerCase
-
-  override def viewId = "views-" + aggregateRootType.getClass.getSimpleName.toLowerCase + "-" + viewName
-
-  override def receive = {
-    case event => queryModel ! event
-  }
-}
-
 // TODO: Command acknowledgement
 // TODO: Sequence numbers in events for de-duping on the query model side
 class DomainModel(system: ActorSystem) {
 
+  implicit val mat = ActorMaterializer()(system)
+
   var aggregateRootTemplates = Map[AggregateRootType, AggregateRootTemplate]()
 
   var queryModels = Map[Class[_ <: QueryModel], ActorRef]()
+
+  // TODO: Hardcoded for LevelDB - must change
+  val queries = PersistenceQuery(system).readJournalFor[LeveldbReadJournal](
+    LeveldbReadJournal.Identifier)
 
   def register(typeInfo: AggregateRootType) = {
     val template = typeInfo.template(system)
@@ -155,8 +123,13 @@ class DomainModel(system: ActorSystem) {
   }
 
   def registerQueryModel(queryModel: QueryModel) = {
+    // TODO: Offset is from beginning of time in this case as we're using in-mem views
+    // TODO: Need to deal with what happens if stream ends unexpectedly
+    // TODO: No backpressure to query model - need to read up on this
+    val aggregateEventSource = queries.eventsByTag(tag = queryModel.aggregateRootType.name, offset = 0L)
     val queryModelActorRef = system.actorOf(queryModel.props)
-    system.actorOf(EventAggregatorView.props(queryModel.getClass.getName.toLowerCase, queryModel.aggregateRootType, queryModelActorRef))
+    val queryModelSink = Sink.actorRef(queryModelActorRef, "completed") // TODO: better complete message
+    aggregateEventSource.runWith(queryModelSink)
     queryModels = queryModels + (queryModel.getClass -> queryModelActorRef)
     this
   }
@@ -177,5 +150,4 @@ class DomainModel(system: ActorSystem) {
     }
   }
 }
-
 

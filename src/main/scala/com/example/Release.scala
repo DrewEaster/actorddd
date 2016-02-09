@@ -14,7 +14,7 @@ class ReleaseTemplate(val system: ActorSystem) extends AggregateRootTemplate {
 
   val typeInfo = Release
 
-  override def props(aggregator: ActorPath) = Props(new Release(aggregator))
+  override def props = Props(new Release())
 }
 
 case object ReleaseState {
@@ -32,7 +32,7 @@ case class ReleaseState(id: UUID, info: ReleaseInfo, currentDeployment: Option[D
   }
 }
 
-class Release(val aggregator: ActorPath) extends AggregateRoot[ReleaseState](ReleaseState.initial, aggregator) {
+class Release extends AggregateRoot[ReleaseState](ReleaseState.initial) {
 
   import ReleaseProtocol._
 
