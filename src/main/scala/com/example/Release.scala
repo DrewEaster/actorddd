@@ -65,6 +65,9 @@ class Release extends AggregateRoot[ReleaseState](ReleaseState.initial) {
         updateState(evt)
         context.become(deploying)
       }
+    case Command(id, ("queryPersisted", model)) =>
+      val d = model.asInstanceOf[DomainModel]
+      d.fetchByPersistenceId(this)
   }
 
   def deploying: Receive = {

@@ -32,11 +32,16 @@ object Boot extends App {
 
   val releaseId = UUID.randomUUID()
   val releaseOne = domainModel.aggregateRootOf(Release, releaseId)
+
   releaseOne ! CreateRelease(ReleaseInfo("component1", "1.2", None, None))
 
   Thread.sleep(2000)
 
+  // Outright hack to tell the Release actor to perform an eventsByPersistenceId
+  releaseOne ! ("queryPersisted", domainModel)
+
   val releases = domainModel.queryModelOf(Releases)
+
   (releases ? GetReleases).map {
     case ReleasesDto(r, t) => r.foreach(println)
   }
