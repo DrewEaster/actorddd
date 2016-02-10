@@ -12,7 +12,7 @@ import akka.stream.ActorMaterializer
 import akka.stream.scaladsl.Sink
 
 trait Event {
-  val aggregateType: AggregateRootType
+  val aggregateType: String
 }
 
 trait AggregateRootType {
