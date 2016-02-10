@@ -24,7 +24,9 @@ libraryDependencies ++= {
     "com.typesafe.akka" %% "akka-cluster-sharding" % akkaV,
     "com.typesafe.akka" %% "akka-multi-node-testkit" % akkaV,
     "com.typesafe.akka" %% "akka-persistence-query-experimental" % akkaV,
-    "org.scalatest" %% "scalatest" % "2.1.6" % "test"
+    "org.iq80.leveldb"            % "leveldb"          % "0.7",
+    "org.fusesource.leveldbjni"   % "leveldbjni-all"   % "1.8",
+    "org.scalatest" %% "scalatest" % "2.2.6" % "test"
   )
 }
 
