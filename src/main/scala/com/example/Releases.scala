@@ -1,6 +1,7 @@
 package com.example
 
 import akka.actor._
+import akka.persistence.query.EventEnvelope
 
 object Releases extends QueryModel {
 
@@ -17,6 +18,13 @@ class Releases extends Actor with ActorLogging {
   var releases = Map[String, ReleaseDto]()
 
   override def receive = {
+    case EventEnvelope(_, _, _, event) => handleSink(event)
+    case GetRelease(id) => sender() ! releases.get(id)
+    case GetReleases => sender() ! ReleasesDto(releases.values.toSeq, releases.size)
+    case s => println(s"Unrecognised msg: $s")
+  }
+
+  private def handleSink(e: Any): Unit = e match {
     case ReleaseCreated(id, info) => releases = releases + (id -> ReleaseDto(id, info, None, List()))
     case DeploymentStarted(id, info) => releases.get(id).map { release =>
       if (release.currentDeployment.isEmpty) releases = releases + (id -> release.copy(currentDeployment = Some(info)))
@@ -24,7 +32,5 @@ class Releases extends Actor with ActorLogging {
     case DeploymentEnded(id, info) => releases.get(id).map { release =>
       if (release.currentDeployment.isDefined) releases = releases + (id -> release.copy(currentDeployment = None, pastDeployments = info :: release.pastDeployments.toList))
     }
-    case GetRelease(id) => sender() ! releases.get(id)
-    case GetReleases => sender() ! ReleasesDto(releases.values.toSeq, releases.size)
   }
 }

@@ -3,8 +3,6 @@ package com.example
 import java.util.UUID
 
 import akka.actor._
-import akka.cluster.sharding.ShardRegion.Passivate
-import akka.cluster.sharding.{ClusterSharding, ClusterShardingSettings, ShardRegion}
 import akka.persistence.PersistentActor
 import akka.persistence.query.PersistenceQuery
 import akka.persistence.query.journal.leveldb.scaladsl.LeveldbReadJournal
@@ -21,16 +19,6 @@ trait AggregateRootType {
   def template(system: ActorSystem): AggregateRootTemplate
 }
 
-object AggregateRootTemplate {
-  val extractEntityId: ShardRegion.ExtractEntityId = {
-    case cmd: Command => (cmd.id.toString, cmd)
-  }
-
-  val extractShardId: ShardRegion.ExtractShardId = {
-    case cmd: Command => (math.abs(cmd.id.toString.hashCode) % 100).toString
-  }
-}
-
 trait AggregateState[S] {
   val value: S
 
@@ -39,30 +27,18 @@ trait AggregateState[S] {
 
 trait AggregateRootTemplate {
 
-  import AggregateRootTemplate._
-
   val system: ActorSystem
 
   def props(): Props
 
   val typeInfo: AggregateRootType
 
-  lazy val aggregateRegion = ClusterSharding(system).start(
-    typeName = typeInfo.getClass.getName,
-    entityProps = props(),
-    settings = ClusterShardingSettings(system),
-    extractEntityId = extractEntityId,
-    extractShardId = extractShardId)
+  lazy val aggregateRegion = system.actorOf(props())
 
   def aggregateRootOf(id: UUID) = AggregateRootRef(id, aggregateRegion)
 }
 
 abstract class AggregateRoot[S](initialState: AggregateState[S]) extends PersistentActor with ActorLogging {
-
-  import scala.concurrent.duration._
-
-  context.setReceiveTimeout(2.minutes)
-
   private var internalState: AggregateState[S] = initialState
 
   override def persistenceId = self.path.parent.name + "-" + self.path.name
@@ -76,11 +52,6 @@ abstract class AggregateRoot[S](initialState: AggregateState[S]) extends Persist
   }
 
   def state = internalState.value
-
-  override def unhandled(msg: Any): Unit = msg match {
-    case ReceiveTimeout => context.parent ! Passivate(stopMessage = PoisonPill)
-    case _ => super.unhandled(msg)
-  }
 }
 
 case class Command(id: UUID, payload: Any)
@@ -123,7 +94,7 @@ class DomainModel(system: ActorSystem) {
   }
 
   def fetchByPersistenceId(actor: PersistentActor): Unit =
-    queries.eventsByPersistenceId(actor.persistenceId).runForeach(eventEnv => println(s"fetchByPersistenceId: $eventEnv"))
+    queries.currentEventsByPersistenceId(actor.persistenceId).runForeach(eventEnv => println(s"fetchByPersistenceId: $eventEnv"))
 
   def registerQueryModel(queryModel: QueryModel) = {
     // TODO: Offset is from beginning of time in this case as we're using in-mem views

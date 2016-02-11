@@ -18,12 +18,9 @@ object Boot extends App {
   val config = ConfigFactory.parseString("akka.remote.netty.tcp.port=2551").
     withFallback(ConfigFactory.load())
 
-  implicit val system = ActorSystem("ClusterSystem", config)
+  implicit val system = ActorSystem("DDDSystem", config)
 
   implicit val timeout = Timeout(2 seconds)
-
-  // Start the shared event journal
-  new SharedJournal(system, path = ActorPath.fromString("akka.tcp://ClusterSystem@127.0.0.1:2551/user/store"))
 
   // Initialise the domain model with the Release aggregate root and the single query model
   val domainModel = new DomainModel(system)
@@ -36,9 +33,6 @@ object Boot extends App {
   releaseOne ! CreateRelease(ReleaseInfo("component1", "1.2", None, None))
 
   Thread.sleep(2000)
-
-  // Outright hack to tell the Release actor to perform an eventsByPersistenceId
-  releaseOne ! ("queryPersisted", domainModel)
 
   val releases = domainModel.queryModelOf(Releases)
 
