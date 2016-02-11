@@ -93,9 +93,6 @@ class DomainModel(system: ActorSystem) {
     this
   }
 
-  def fetchByPersistenceId(actor: PersistentActor): Unit =
-    queries.currentEventsByPersistenceId(actor.persistenceId).runForeach(eventEnv => println(s"fetchByPersistenceId: $eventEnv"))
-
   def registerQueryModel(queryModel: QueryModel) = {
     // TODO: Offset is from beginning of time in this case as we're using in-mem views
     // TODO: Need to deal with what happens if stream ends unexpectedly
