@@ -100,7 +100,7 @@ class DomainModel(system: ActorSystem) {
     val aggregateEventSource = queries.eventsByTag(tag = queryModel.aggregateRootType.name, offset = 0L)
     val queryModelActorRef = system.actorOf(queryModel.props)
     val queryModelSink = Sink.actorRef(queryModelActorRef, "completed") // TODO: better complete message
-    aggregateEventSource.runWith(queryModelSink)
+    aggregateEventSource.map(_.event).runWith(queryModelSink)
     queryModels = queryModels + (queryModel.getClass -> queryModelActorRef)
     this
   }
@@ -121,4 +121,3 @@ class DomainModel(system: ActorSystem) {
     }
   }
 }
-
