@@ -14,11 +14,6 @@ libraryDependencies ++= {
   val akkaV = "2.4.1"
   val sprayV = "1.3.3"
   Seq(
-    "io.spray"            %%  "spray-can"       % sprayV,
-    "io.spray"            %%  "spray-routing"   % sprayV,
-    "io.spray"            %%  "spray-json"      % "1.3.2",
-    "com.typesafe.play"   %%  "play-json"       % "2.4.6",
-    "io.spray"            %%  "spray-testkit"   % sprayV    % "test",
     "org.specs2"          %%  "specs2-core"     % "3.7"  % "test",
     "com.typesafe.akka" %% "akka-contrib" % akkaV,
     "com.typesafe.akka" %% "akka-cluster-sharding" % akkaV,
