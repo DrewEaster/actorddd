@@ -2,12 +2,15 @@ package com.example
 
 import java.util.UUID
 
+import akka.actor.Actor.Receive
 import akka.actor._
 import akka.persistence.PersistentActor
 import akka.persistence.query.PersistenceQuery
 import akka.persistence.query.journal.leveldb.scaladsl.LeveldbReadJournal
 import akka.stream.ActorMaterializer
 import akka.stream.scaladsl.Sink
+
+import scala.collection.mutable
 
 trait Event {
   val aggregateType: String
@@ -26,16 +29,30 @@ trait AggregateState[S] {
 }
 
 trait AggregateRootTemplate {
-
   val system: ActorSystem
 
   def props(): Props
 
   val typeInfo: AggregateRootType
 
-  lazy val aggregateRegion = system.actorOf(props())
+  var aggregateParent: Option[ActorRef] = None
 
-  def aggregateRootOf(id: UUID) = AggregateRootRef(id, aggregateRegion)
+  def aggregateRootOf(id: UUID) = {
+    if (aggregateParent.isEmpty) {
+      aggregateParent = Some(system.actorOf(Props(classOf[AggregateParentActor], this)))
+    }
+    AggregateRootRef(id, aggregateParent.get)
+  }
+}
+
+class AggregateParentActor(template: AggregateRootTemplate) extends Actor with ActorLogging {
+  private val runningActors: mutable.Map[UUID, ActorRef] = mutable.Map()
+
+  private def getActor(id: UUID) = runningActors.getOrElseUpdate(id, { context.system.actorOf(template.props()) })
+
+  override def receive = {
+    case cmd @ Command(id, _) => getActor(id).!(cmd)(sender)
+  }
 }
 
 abstract class AggregateRoot[S](initialState: AggregateState[S]) extends PersistentActor with ActorLogging {
@@ -56,13 +73,13 @@ abstract class AggregateRoot[S](initialState: AggregateState[S]) extends Persist
 
 case class Command(id: UUID, payload: Any)
 
-case class AggregateRootRef(id: UUID, region: ActorRef) {
+case class AggregateRootRef(id: UUID, parent: ActorRef) {
   def tell(message: Any)(implicit sender: ActorRef = null) {
-    region ! Command(id, message)
+    parent ! Command(id, message)
   }
 
   def !(message: Any)(implicit sender: ActorRef = null) {
-    region ! Command(id, message)
+    parent ! Command(id, message)
   }
 }
 
