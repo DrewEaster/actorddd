@@ -36,13 +36,6 @@ trait AggregateRootTemplate {
   val typeInfo: AggregateRootType
 
   var aggregateParent: Option[ActorRef] = None
-
-  def aggregateRootOf(id: UUID) = {
-    if (aggregateParent.isEmpty) {
-      aggregateParent = Some(system.actorOf(Props(classOf[AggregateParentActor], this)))
-    }
-    AggregateRootRef(id, aggregateParent.get)
-  }
 }
 
 class AggregateParentActor(template: AggregateRootTemplate) extends Actor with ActorLogging {
@@ -51,7 +44,7 @@ class AggregateParentActor(template: AggregateRootTemplate) extends Actor with A
   private def getActor(id: UUID) = runningActors.getOrElseUpdate(id, { context.system.actorOf(template.props()) })
 
   override def receive = {
-    case cmd @ Command(id, _) => getActor(id).!(cmd)(sender)
+    case cmd @ Command(id, _) => getActor(id).forward(cmd)
   }
 }
 
@@ -96,7 +89,7 @@ class DomainModel(system: ActorSystem) {
 
   implicit val mat = ActorMaterializer()(system)
 
-  var aggregateRootTemplates = Map[AggregateRootType, AggregateRootTemplate]()
+  var aggregateRootTemplates = Map[AggregateRootType, ActorRef]()
 
   var queryModels = Map[Class[_ <: QueryModel], ActorRef]()
 
@@ -106,7 +99,8 @@ class DomainModel(system: ActorSystem) {
 
   def register(typeInfo: AggregateRootType) = {
     val template = typeInfo.template(system)
-    aggregateRootTemplates = aggregateRootTemplates + (typeInfo -> template)
+    val parent = system.actorOf(Props(classOf[AggregateParentActor], template))
+    aggregateRootTemplates = aggregateRootTemplates + (typeInfo -> parent)
     this
   }
 
@@ -124,7 +118,7 @@ class DomainModel(system: ActorSystem) {
 
   def aggregateRootOf(typeInfo: AggregateRootType, id: UUID) = {
     if (aggregateRootTemplates.contains(typeInfo)) {
-      aggregateRootTemplates(typeInfo).aggregateRootOf(id)
+      AggregateRootRef(id, aggregateRootTemplates(typeInfo))
     } else {
       throw new IllegalArgumentException("The aggregate root type is not supported by this domain model!")
     }

@@ -11,7 +11,7 @@ javacOptions ++= Seq("-source", "1.8", "-target", "1.8")
 resolvers += "Typesafe Releases" at "http://repo.typesafe.com/typesafe/releases/"
 
 libraryDependencies ++= {
-  val akkaV = "2.4.1"
+  val akkaV = "2.4.2"
   val sprayV = "1.3.3"
   Seq(
     "org.specs2"          %%  "specs2-core"     % "3.7"  % "test",
