@@ -18,8 +18,7 @@ trait Event {
 
 trait AggregateRootType {
   def name = getClass.getName
-
-  def template(system: ActorSystem): AggregateRootTemplate
+  def props: Props
 }
 
 trait AggregateState[S] {
@@ -28,20 +27,10 @@ trait AggregateState[S] {
   def updated(evt: Event): AggregateState[S]
 }
 
-trait AggregateRootTemplate {
-  val system: ActorSystem
-
-  def props(): Props
-
-  val typeInfo: AggregateRootType
-
-  var aggregateParent: Option[ActorRef] = None
-}
-
-class AggregateParentActor(template: AggregateRootTemplate) extends Actor with ActorLogging {
+class AggregateParentActor(typeInfo: AggregateRootType) extends Actor with ActorLogging {
   private val runningActors: mutable.Map[UUID, ActorRef] = mutable.Map()
 
-  private def getActor(id: UUID) = runningActors.getOrElseUpdate(id, { context.system.actorOf(template.props()) })
+  private def getActor(id: UUID) = runningActors.getOrElseUpdate(id, { context.system.actorOf(typeInfo.props) })
 
   override def receive = {
     case cmd @ Command(id, _) => getActor(id).forward(cmd)
@@ -89,7 +78,7 @@ class DomainModel(system: ActorSystem) {
 
   implicit val mat = ActorMaterializer()(system)
 
-  var aggregateRootTemplates = Map[AggregateRootType, ActorRef]()
+  var aggregateRootParents = Map[AggregateRootType, ActorRef]()
 
   var queryModels = Map[Class[_ <: QueryModel], ActorRef]()
 
@@ -98,9 +87,8 @@ class DomainModel(system: ActorSystem) {
     LeveldbReadJournal.Identifier)
 
   def register(typeInfo: AggregateRootType) = {
-    val template = typeInfo.template(system)
-    val parent = system.actorOf(Props(classOf[AggregateParentActor], template))
-    aggregateRootTemplates = aggregateRootTemplates + (typeInfo -> parent)
+    val parent = system.actorOf(Props(classOf[AggregateParentActor], typeInfo))
+    aggregateRootParents = aggregateRootParents + (typeInfo -> parent)
     this
   }
 
@@ -117,8 +105,8 @@ class DomainModel(system: ActorSystem) {
   }
 
   def aggregateRootOf(typeInfo: AggregateRootType, id: UUID) = {
-    if (aggregateRootTemplates.contains(typeInfo)) {
-      AggregateRootRef(id, aggregateRootTemplates(typeInfo))
+    if (aggregateRootParents.contains(typeInfo)) {
+      AggregateRootRef(id, aggregateRootParents(typeInfo))
     } else {
       throw new IllegalArgumentException("The aggregate root type is not supported by this domain model!")
     }
