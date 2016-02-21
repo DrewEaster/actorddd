@@ -2,7 +2,6 @@ package com.example
 
 import java.util.UUID
 
-import akka.actor.Actor.Receive
 import akka.actor._
 import akka.persistence.PersistentActor
 import akka.persistence.query.PersistenceQuery
@@ -34,6 +33,64 @@ class AggregateParentActor(typeInfo: AggregateRootType) extends Actor with Actor
 
   override def receive = {
     case cmd @ Command(id, _) => getActor(id).forward(cmd)
+  }
+}
+
+abstract class SimpleAggregateRoot[S, E <: Event](initialState: AggregateState[S]) extends AggregateRoot[S](initialState) {
+  type CommandEvent = PartialFunction[Command, E]
+  type EventHandler = PartialFunction[E, Option[PartialFunction[Command, E]]]
+
+  def commandHandler = new SimpleAggregateRootCommandHandler(events, this, uninitialised)
+
+  def events: EventHandler
+
+  override def receiveRecover: Receive = new SimpleAggregateRootEventHandler(events, this, commandHandler)
+
+  override def receiveCommand: Receive = commandHandler
+
+  def uninitialised: CommandEvent
+}
+
+class SimpleAggregateRootEventHandler[S, E <: Event](events: PartialFunction[E, Option[PartialFunction[Command, E]]], root: AggregateRoot[S], handler: SimpleAggregateRootCommandHandler[S, E]) extends PartialFunction[Any, Unit] {
+  override def isDefinedAt(x: Any): Boolean = x match {
+    case event: E ⇒ events.isDefinedAt(event)
+    case _ ⇒ false
+  }
+
+  override def apply(v1: Any): Unit = v1 match {
+    case event: E ⇒
+      root.updateState(event)
+      handler.switchIfNeeded(event)
+  }
+}
+
+class SimpleAggregateRootCommandHandler[S, E <: Event](nextState: PartialFunction[E, Option[PartialFunction[Command, E]]], root: AggregateRoot[S], initial: PartialFunction[Command, E]) extends PartialFunction[Any, Unit] {
+  private var currentFunction = initial
+
+  override def isDefinedAt(x: Any): Boolean = x match {
+    case cmd: Command ⇒ currentFunction.isDefinedAt(cmd)
+    case _ ⇒ false
+  }
+
+  override def apply(v1: Any): Unit = v1 match {
+    case cmd: Command ⇒
+      val event = currentFunction(cmd)
+      root.persist(event) { event ⇒
+        root.updateState(event)
+        root.context.system.eventStream.publish(event)
+        switchIfNeeded(event)
+      }
+  }
+
+  def switchIfNeeded(event: E) = {
+    if (nextState.isDefinedAt(event)) {
+      currentFunction = nextState(event).getOrElse(emptyBehavior)
+    }
+  }
+
+  object emptyBehavior extends PartialFunction[Command, E] {
+    def isDefinedAt(x: Command) = false
+    def apply(x: Command) = throw new UnsupportedOperationException("Empty behavior apply()")
   }
 }
 
