@@ -21,10 +21,6 @@ trait AggregateRootType {
   def props(id: UUID): Props
 }
 
-trait AggregateState[S] {
-  def updated(evt: Event): S
-}
-
 class AggregateRootNotInitializedException extends Exception
 
 class AggregateParentActor(typeInfo: AggregateRootType) extends Actor with ActorLogging {
@@ -39,22 +35,20 @@ class AggregateParentActor(typeInfo: AggregateRootType) extends Actor with Actor
   }
 }
 
-abstract class SimpleAggregateRoot[S <: AggregateState[S], E <: Event](id: UUID) extends AggregateRoot[S] {
+abstract class SimpleAggregateRoot[S, E <: Event](id: UUID) extends AggregateRoot[S] {
   type CommandEvent = PartialFunction[Command, E]
   type EventHandler = PartialFunction[E, Option[PartialFunction[Command, E]]]
 
   def commandHandler = new SimpleAggregateRootCommandHandler(events, this, uninitialised)
 
-  def events: EventHandler
-
   override def receiveRecover: Receive = new SimpleAggregateRootEventHandler(events, this, commandHandler)
-
   override def receiveCommand: Receive = commandHandler
 
+  def events: EventHandler
   def uninitialised: CommandEvent
 }
 
-class SimpleAggregateRootEventHandler[S <: AggregateState[S], E <: Event](events: PartialFunction[E, Option[PartialFunction[Command, E]]], root: AggregateRoot[S], handler: SimpleAggregateRootCommandHandler[S, E]) extends PartialFunction[Any, Unit] {
+class SimpleAggregateRootEventHandler[S, E <: Event](events: PartialFunction[E, Option[PartialFunction[Command, E]]], root: AggregateRoot[S], handler: SimpleAggregateRootCommandHandler[S, E]) extends PartialFunction[Any, Unit] {
   override def isDefinedAt(x: Any): Boolean = x match {
     case event: E ⇒ events.isDefinedAt(event)
     case _ ⇒ false
@@ -67,7 +61,7 @@ class SimpleAggregateRootEventHandler[S <: AggregateState[S], E <: Event](events
   }
 }
 
-class SimpleAggregateRootCommandHandler[S <: AggregateState[S], E <: Event](nextState: PartialFunction[E, Option[PartialFunction[Command, E]]], root: AggregateRoot[S], initial: PartialFunction[Command, E]) extends PartialFunction[Any, Unit] {
+class SimpleAggregateRootCommandHandler[S, E <: Event](nextState: PartialFunction[E, Option[PartialFunction[Command, E]]], root: AggregateRoot[S], initial: PartialFunction[Command, E]) extends PartialFunction[Any, Unit] {
   private var currentFunction = initial
 
   override def isDefinedAt(x: Any): Boolean = x match {
@@ -99,33 +93,27 @@ class SimpleAggregateRootCommandHandler[S <: AggregateState[S], E <: Event](next
 
 }
 
-abstract class AggregateRoot[S <: AggregateState[S]] extends PersistentActor with ActorLogging {
-
+abstract class AggregateRoot[S] extends PersistentActor with ActorLogging {
   type AggregateStateFactory = PartialFunction[Event, S]
 
   def factory: AggregateStateFactory
+  def next(event: Event): S
 
-  private val stateManager = StateManager(factory)
+  private val stateManager = new StateManager(factory)
+
+  def updateState(event: Event) = stateManager.update(event)
+  def state = stateManager.state
 
   override def persistenceId = self.path.parent.name + "-" + self.path.name
 
-  def updateState(event: Event) = stateManager(event)
-
-  def state = stateManager.state
-
-  private case class StateManager(factory: AggregateStateFactory) {
+  private class StateManager(factory: AggregateStateFactory) {
     private var s: Option[S] = None
 
-    def apply(event: Event): Unit = {
-      s = s match {
-        case Some(as) => Some(as.updated(event))
-        case None => Some(factory.apply(event))
-      }
+    def update(event: Event): Unit = {
+      s = s.map(_ ⇒ next(event)).orElse(Some(factory.apply(event)))
     }
 
-    def initialized = s.isDefined
-
-    def state = if (initialized) s.get else throw new AggregateRootNotInitializedException
+    def state = s.getOrElse(throw new AggregateRootNotInitializedException)
   }
 }
 
