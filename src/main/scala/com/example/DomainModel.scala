@@ -17,6 +17,7 @@ trait Event {
 
 trait AggregateRootType {
   def name = getClass.getName
+
   def props(id: UUID): Props
 }
 
@@ -26,17 +27,21 @@ trait AggregateState[S] {
   def updated(evt: Event): AggregateState[S]
 }
 
+class AggregateRootNotInitializedException extends Exception
+
 class AggregateParentActor(typeInfo: AggregateRootType) extends Actor with ActorLogging {
   private val runningActors: mutable.Map[UUID, ActorRef] = mutable.Map()
 
-  private def getActor(id: UUID) = runningActors.getOrElseUpdate(id, { context.system.actorOf(typeInfo.props(id)) })
+  private def getActor(id: UUID) = runningActors.getOrElseUpdate(id, {
+    context.system.actorOf(typeInfo.props(id))
+  })
 
   override def receive = {
-    case cmd @ CommandWrapper(id, _) => getActor(id).forward(cmd.payload)
+    case cmd@CommandWrapper(id, _) => getActor(id).forward(cmd.payload)
   }
 }
 
-abstract class SimpleAggregateRoot[S, E <: Event](id: UUID, initialState: AggregateState[S]) extends AggregateRoot[S](initialState) {
+abstract class SimpleAggregateRoot[S, E <: Event](id: UUID) extends AggregateRoot[S] {
   type CommandEvent = PartialFunction[Command, E]
   type EventHandler = PartialFunction[E, Option[PartialFunction[Command, E]]]
 
@@ -90,24 +95,40 @@ class SimpleAggregateRootCommandHandler[S, E <: Event](nextState: PartialFunctio
 
   object emptyBehavior extends PartialFunction[Command, E] {
     def isDefinedAt(x: Command) = false
+
     def apply(x: Command) = throw new UnsupportedOperationException("Empty behavior apply()")
   }
+
 }
 
-abstract class AggregateRoot[S](initialState: AggregateState[S]) extends PersistentActor with ActorLogging {
-  private var internalState: AggregateState[S] = initialState
+abstract class AggregateRoot[S] extends PersistentActor with ActorLogging {
+
+  type AggregateStateFactory = PartialFunction[Event, AggregateState[S]]
+
+  def factory: AggregateStateFactory
+
+  private val stateManager = StateManager(factory)
 
   override def persistenceId = self.path.parent.name + "-" + self.path.name
 
-  def updateState(event: Event) {
-    event match {
-      case _ =>
-        log.info("Updating state...")
-        internalState = internalState.updated(event)
-    }
-  }
+  def updateState(event: Event) = stateManager(event)
 
-  def state = internalState.value
+  def state = stateManager.state.value
+
+  private case class StateManager(factory: AggregateStateFactory) {
+    private var s: Option[AggregateState[S]] = None
+
+    def apply(event: Event): Unit = {
+      s = s match {
+        case Some(as) => Some(as.updated(event))
+        case None => Some(factory.apply(event))
+      }
+    }
+
+    def initialized = s.isDefined
+
+    def state = if (initialized) s.get else throw new AggregateRootNotInitializedException
+  }
 }
 
 case class CommandWrapper(id: UUID, payload: Command)
