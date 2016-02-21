@@ -17,7 +17,7 @@ trait Event {
 
 trait AggregateRootType {
   def name = getClass.getName
-  def props: Props
+  def props(id: UUID): Props
 }
 
 trait AggregateState[S] {
@@ -29,14 +29,14 @@ trait AggregateState[S] {
 class AggregateParentActor(typeInfo: AggregateRootType) extends Actor with ActorLogging {
   private val runningActors: mutable.Map[UUID, ActorRef] = mutable.Map()
 
-  private def getActor(id: UUID) = runningActors.getOrElseUpdate(id, { context.system.actorOf(typeInfo.props) })
+  private def getActor(id: UUID) = runningActors.getOrElseUpdate(id, { context.system.actorOf(typeInfo.props(id)) })
 
   override def receive = {
-    case cmd @ Command(id, _) => getActor(id).forward(cmd)
+    case cmd @ CommandWrapper(id, _) => getActor(id).forward(cmd.payload)
   }
 }
 
-abstract class SimpleAggregateRoot[S, E <: Event](initialState: AggregateState[S]) extends AggregateRoot[S](initialState) {
+abstract class SimpleAggregateRoot[S, E <: Event](id: UUID, initialState: AggregateState[S]) extends AggregateRoot[S](initialState) {
   type CommandEvent = PartialFunction[Command, E]
   type EventHandler = PartialFunction[E, Option[PartialFunction[Command, E]]]
 
@@ -110,15 +110,17 @@ abstract class AggregateRoot[S](initialState: AggregateState[S]) extends Persist
   def state = internalState.value
 }
 
-case class Command(id: UUID, payload: Any)
+case class CommandWrapper(id: UUID, payload: Command)
+
+trait Command
 
 case class AggregateRootRef(id: UUID, parent: ActorRef) {
-  def tell(message: Any)(implicit sender: ActorRef = null) {
-    parent ! Command(id, message)
+  def tell(message: Command)(implicit sender: ActorRef = null) {
+    parent ! CommandWrapper(id, message)
   }
 
-  def !(message: Any)(implicit sender: ActorRef = null) {
-    parent ! Command(id, message)
+  def !(message: Command)(implicit sender: ActorRef = null) {
+    parent ! CommandWrapper(id, message)
   }
 }
 
