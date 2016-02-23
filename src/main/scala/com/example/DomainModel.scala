@@ -39,47 +39,26 @@ abstract class SimpleAggregateRoot[S, E <: Event](id: UUID) extends AggregateRoo
   type CommandEvent = PartialFunction[Command, E]
   type EventHandler = PartialFunction[E, Option[PartialFunction[Command, E]]]
 
-  def commandHandler = new SimpleAggregateRootCommandHandler(events, this, uninitialised)
-
   override def receiveRecover: Receive = {
     case event: E if events.isDefinedAt(event) ⇒
       updateState(event)
-      commandHandler.switchIfNeeded(event)
+      maybeBecome(event)
   }
-  override def receiveCommand: Receive = commandHandler
+
+  override def receiveCommand: Receive = wrapPartial(uninitialised)
 
   def events: EventHandler
   def uninitialised: CommandEvent
-}
 
-class SimpleAggregateRootCommandHandler[S, E <: Event](nextState: PartialFunction[E, Option[PartialFunction[Command, E]]], root: AggregateRoot[S], initial: PartialFunction[Command, E]) extends PartialFunction[Any, Unit] {
-  private var currentFunction = initial
-
-  override def isDefinedAt(x: Any): Boolean = x match {
-    case cmd: Command ⇒ currentFunction.isDefinedAt(cmd)
-    case _ ⇒ false
-  }
-
-  override def apply(v1: Any): Unit = v1 match {
-    case cmd: Command ⇒
-      val event = currentFunction(cmd)
-      root.persist(event) { event ⇒
-        root.updateState(event)
-        root.context.system.eventStream.publish(event)
-        switchIfNeeded(event)
+  private def maybeBecome(event: E): Unit = getPartial(event).foreach { next ⇒ context.become(next) }
+  private def getPartial(event: E): Option[Receive] = events(event).map(wrapPartial)
+  private def wrapPartial(handler: CommandEvent): Receive = {
+    case cmd: Command if handler.isDefinedAt(cmd) ⇒
+      persist(handler(cmd)) { event ⇒
+        updateState(event)
+        context.system.eventStream.publish(event)
+        maybeBecome(event)
       }
-  }
-
-  def switchIfNeeded(event: E) = {
-    if (nextState.isDefinedAt(event)) {
-      currentFunction = nextState(event).getOrElse(emptyBehavior)
-    }
-  }
-
-  object emptyBehavior extends PartialFunction[Command, E] {
-    def isDefinedAt(x: Command) = false
-
-    def apply(x: Command) = throw new UnsupportedOperationException("Empty behavior apply()")
   }
 }
 
