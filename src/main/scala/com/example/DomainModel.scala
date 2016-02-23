@@ -64,9 +64,10 @@ abstract class SimpleAggregateRoot[S, E <: Event](id: UUID) extends AggregateRoo
 
 abstract class AggregateRoot[S] extends PersistentActor with ActorLogging {
   type AggregateStateFactory = PartialFunction[Event, S]
+  type StateTransition = PartialFunction[Event, S]
 
   def factory: AggregateStateFactory
-  def next(event: Event): S
+  def next: StateTransition
 
   def state = _state.getOrElse(throw new AggregateRootNotInitializedException)
   def updateState(event: Event) =
