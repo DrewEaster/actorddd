@@ -99,22 +99,12 @@ abstract class AggregateRoot[S] extends PersistentActor with ActorLogging {
   def factory: AggregateStateFactory
   def next(event: Event): S
 
-  private val stateManager = new StateManager(factory)
-
-  def updateState(event: Event) = stateManager.update(event)
-  def state = stateManager.state
+  def state = _state.getOrElse(throw new AggregateRootNotInitializedException)
+  def updateState(event: Event) =
+    _state = _state.map(_ ⇒ next(event)).orElse(Some(factory.apply(event)))
+  private var _state: Option[S] = None
 
   override def persistenceId = self.path.parent.name + "-" + self.path.name
-
-  private class StateManager(factory: AggregateStateFactory) {
-    private var s: Option[S] = None
-
-    def update(event: Event): Unit = {
-      s = s.map(_ ⇒ next(event)).orElse(Some(factory.apply(event)))
-    }
-
-    def state = s.getOrElse(throw new AggregateRootNotInitializedException)
-  }
 }
 
 case class CommandWrapper(id: UUID, payload: Command)
