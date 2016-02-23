@@ -41,24 +41,15 @@ abstract class SimpleAggregateRoot[S, E <: Event](id: UUID) extends AggregateRoo
 
   def commandHandler = new SimpleAggregateRootCommandHandler(events, this, uninitialised)
 
-  override def receiveRecover: Receive = new SimpleAggregateRootEventHandler(events, this, commandHandler)
+  override def receiveRecover: Receive = {
+    case event: E if events.isDefinedAt(event) ⇒
+      updateState(event)
+      commandHandler.switchIfNeeded(event)
+  }
   override def receiveCommand: Receive = commandHandler
 
   def events: EventHandler
   def uninitialised: CommandEvent
-}
-
-class SimpleAggregateRootEventHandler[S, E <: Event](events: PartialFunction[E, Option[PartialFunction[Command, E]]], root: AggregateRoot[S], handler: SimpleAggregateRootCommandHandler[S, E]) extends PartialFunction[Any, Unit] {
-  override def isDefinedAt(x: Any): Boolean = x match {
-    case event: E ⇒ events.isDefinedAt(event)
-    case _ ⇒ false
-  }
-
-  override def apply(v1: Any): Unit = v1 match {
-    case event: E ⇒
-      root.updateState(event)
-      handler.switchIfNeeded(event)
-  }
 }
 
 class SimpleAggregateRootCommandHandler[S, E <: Event](nextState: PartialFunction[E, Option[PartialFunction[Command, E]]], root: AggregateRoot[S], initial: PartialFunction[Command, E]) extends PartialFunction[Any, Unit] {
@@ -90,7 +81,6 @@ class SimpleAggregateRootCommandHandler[S, E <: Event](nextState: PartialFunctio
 
     def apply(x: Command) = throw new UnsupportedOperationException("Empty behavior apply()")
   }
-
 }
 
 abstract class AggregateRoot[S] extends PersistentActor with ActorLogging {
